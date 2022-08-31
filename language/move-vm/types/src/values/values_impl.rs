@@ -42,6 +42,7 @@ enum ValueImpl {
     U8(u8),
     U64(u64),
     U128(u128),
+    U256(u128, u128),
     Bool(bool),
     Address(AccountAddress),
 
@@ -68,6 +69,7 @@ enum Container {
     VecU8(Rc<RefCell<Vec<u8>>>),
     VecU64(Rc<RefCell<Vec<u64>>>),
     VecU128(Rc<RefCell<Vec<u128>>>),
+    VecU256(Rc<RefCell<Vec<(u128, u128)>>>),
     VecBool(Rc<RefCell<Vec<bool>>>),
     VecAddress(Rc<RefCell<Vec<AccountAddress>>>),
 }
@@ -134,6 +136,7 @@ pub enum IntegerValue {
     U8(u8),
     U64(u64),
     U128(u128),
+    U256(u128, u128),
 }
 
 /// A Move struct.
@@ -213,6 +216,7 @@ impl Container {
             Self::VecU8(r) => r.borrow().len(),
             Self::VecU64(r) => r.borrow().len(),
             Self::VecU128(r) => r.borrow().len(),
+            Self::VecU256(r) => r.borrow().len(),
             Self::VecBool(r) => r.borrow().len(),
             Self::VecAddress(r) => r.borrow().len(),
         }
@@ -224,6 +228,7 @@ impl Container {
             Self::VecU8(r) => Rc::strong_count(r),
             Self::VecU64(r) => Rc::strong_count(r),
             Self::VecU128(r) => Rc::strong_count(r),
+            Self::VecU256(r) => Rc::strong_count(r),
             Self::VecBool(r) => Rc::strong_count(r),
             Self::VecAddress(r) => Rc::strong_count(r),
         }
@@ -296,6 +301,7 @@ macro_rules! impl_vm_value_ref {
 impl_vm_value_ref!(u8, U8);
 impl_vm_value_ref!(u64, U64);
 impl_vm_value_ref!(u128, U128);
+impl_vm_value_ref!((u128, u128), U256);
 impl_vm_value_ref!(bool, Bool);
 impl_vm_value_ref!(AccountAddress, Address);
 
@@ -327,6 +333,7 @@ impl ValueImpl {
             U8(x) => U8(*x),
             U64(x) => U64(*x),
             U128(x) => U128(*x),
+            U256(l,r) => U256(*l, *r),
             Bool(x) => Bool(*x),
             Address(x) => Address(*x),
 
@@ -358,6 +365,7 @@ impl Container {
             Self::VecU8(r) => Self::VecU8(Rc::new(RefCell::new(r.borrow().clone()))),
             Self::VecU64(r) => Self::VecU64(Rc::new(RefCell::new(r.borrow().clone()))),
             Self::VecU128(r) => Self::VecU128(Rc::new(RefCell::new(r.borrow().clone()))),
+            Self::VecU256(r) => Self::VecU256(Rc::new(RefCell::new(r.borrow().clone()))),
             Self::VecBool(r) => Self::VecBool(Rc::new(RefCell::new(r.borrow().clone()))),
             Self::VecAddress(r) => Self::VecAddress(Rc::new(RefCell::new(r.borrow().clone()))),
 
@@ -377,6 +385,7 @@ impl Container {
             Self::VecU8(r) => Self::VecU8(Rc::clone(r)),
             Self::VecU64(r) => Self::VecU64(Rc::clone(r)),
             Self::VecU128(r) => Self::VecU128(Rc::clone(r)),
+            Self::VecU256(r) => Self::VecU256(Rc::clone(r)),
             Self::VecBool(r) => Self::VecBool(Rc::clone(r)),
             Self::VecAddress(r) => Self::VecAddress(Rc::clone(r)),
             Self::Locals(r) => Self::Locals(Rc::clone(r)),
@@ -436,6 +445,7 @@ impl ValueImpl {
             (U8(l), U8(r)) => l == r,
             (U64(l), U64(r)) => l == r,
             (U128(l), U128(r)) => l == r,
+            (U256(ll,lr), U256(rl,rr)) => ll == rl && lr == rr,
             (Bool(l), Bool(r)) => l == r,
             (Address(l), Address(r)) => l == r,
 
@@ -476,6 +486,7 @@ impl Container {
             (VecU8(l), VecU8(r)) => l.borrow().eq(&*r.borrow()),
             (VecU64(l), VecU64(r)) => l.borrow().eq(&*r.borrow()),
             (VecU128(l), VecU128(r)) => l.borrow().eq(&*r.borrow()),
+            (VecU256(l), VecU256(r)) => l.borrow().eq(&*r.borrow()),
             (VecBool(l), VecBool(r)) => l.borrow().eq(&*r.borrow()),
             (VecAddress(l), VecAddress(r)) => l.borrow().eq(&*r.borrow()),
 
@@ -485,6 +496,7 @@ impl Container {
             | (VecU8(_), _)
             | (VecU64(_), _)
             | (VecU128(_), _)
+            | (VecU256(_), _)
             | (VecBool(_), _)
             | (VecAddress(_), _) => {
                 return Err(
@@ -528,6 +540,7 @@ impl IndexedRef {
             (VecU8(r1), VecU8(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
             (VecU64(r1), VecU64(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
             (VecU128(r1), VecU128(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
+            (VecU256(r1), VecU256(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
             (VecBool(r1), VecBool(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
             (VecAddress(r1), VecAddress(r2)) => r1.borrow()[self.idx] == r2.borrow()[other.idx],
 
@@ -553,6 +566,13 @@ impl IndexedRef {
                 r1.borrow()[self.idx] == *r2.borrow()[other.idx].as_value_ref::<u128>()?
             }
 
+            (Locals(r1), VecU256(r2)) | (Struct(r1), VecU256(r2)) => {
+                *r1.borrow()[self.idx].as_value_ref::<(u128, u128)>()? == r2.borrow()[other.idx]
+            }
+            (VecU256(r1), Locals(r2)) | (VecU256(r1), Struct(r2)) => {
+                r1.borrow()[self.idx] == *r2.borrow()[other.idx].as_value_ref::<(u128, u128)>()?
+            }
+
             (Locals(r1), VecBool(r2)) | (Struct(r1), VecBool(r2)) => {
                 *r1.borrow()[self.idx].as_value_ref::<bool>()? == r2.borrow()[other.idx]
             }
@@ -572,6 +592,7 @@ impl IndexedRef {
             | (VecU8(_), _)
             | (VecU64(_), _)
             | (VecU128(_), _)
+            | (VecU256(_), _)
             | (VecBool(_), _)
             | (VecAddress(_), _) => {
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
@@ -611,6 +632,7 @@ impl IndexedRef {
             VecU8(r) => ValueImpl::U8(r.borrow()[self.idx]),
             VecU64(r) => ValueImpl::U64(r.borrow()[self.idx]),
             VecU128(r) => ValueImpl::U128(r.borrow()[self.idx]),
+            VecU256(r) => ValueImpl::U256(r.borrow()[self.idx]),
             VecBool(r) => ValueImpl::Bool(r.borrow()[self.idx]),
             VecAddress(r) => ValueImpl::Address(r.borrow()[self.idx]),
         };
@@ -675,6 +697,7 @@ impl ContainerRef {
                     Container::VecU8(r) => assign!(r, VecU8),
                     Container::VecU64(r) => assign!(r, VecU64),
                     Container::VecU128(r) => assign!(r, VecU128),
+                    Container::VecU256(r) => assign!(r, VecU256),
                     Container::VecBool(r) => assign!(r, VecBool),
                     Container::VecAddress(r) => assign!(r, VecAddress),
                     Container::Locals(_) => {
@@ -726,12 +749,14 @@ impl IndexedRef {
             (Container::VecU8(r), ValueImpl::U8(x)) => r.borrow_mut()[self.idx] = *x,
             (Container::VecU64(r), ValueImpl::U64(x)) => r.borrow_mut()[self.idx] = *x,
             (Container::VecU128(r), ValueImpl::U128(x)) => r.borrow_mut()[self.idx] = *x,
+            (Container::VecU256(r), ValueImpl::U256(xl, xr)) => r.borrow_mut()[self.idx] = (*xl, *xr),
             (Container::VecBool(r), ValueImpl::Bool(x)) => r.borrow_mut()[self.idx] = *x,
             (Container::VecAddress(r), ValueImpl::Address(x)) => r.borrow_mut()[self.idx] = *x,
 
             (Container::VecU8(_), _)
             | (Container::VecU64(_), _)
             | (Container::VecU128(_), _)
+            | (Container::VecU256(_), _)
             | (Container::VecBool(_), _)
             | (Container::VecAddress(_), _) => {
                 return Err(
@@ -810,6 +835,7 @@ impl ContainerRef {
             Container::VecU8(_)
             | Container::VecU64(_)
             | Container::VecU128(_)
+            | Container::VecU256(_)
             | Container::VecAddress(_)
             | Container::VecBool(_) => ValueImpl::IndexedRef(IndexedRef {
                 idx,
@@ -853,6 +879,7 @@ impl Locals {
             ValueImpl::U8(_)
             | ValueImpl::U64(_)
             | ValueImpl::U128(_)
+            | ValueImpl::U256(_,_)
             | ValueImpl::Bool(_)
             | ValueImpl::Address(_) => Ok(Value(ValueImpl::IndexedRef(IndexedRef {
                 container_ref: ContainerRef::Local(Container::Locals(Rc::clone(&self.0))),
@@ -961,6 +988,10 @@ impl Value {
         Self(ValueImpl::U128(x))
     }
 
+    pub fn u256(l: u128, r: u128) -> Self {
+        Self(ValueImpl::U256(l, r))
+    }
+
     pub fn bool(x: bool) -> Self {
         Self(ValueImpl::Bool(x))
     }
@@ -1002,6 +1033,12 @@ impl Value {
 
     pub fn vector_u128(it: impl IntoIterator<Item = u128>) -> Self {
         Self(ValueImpl::Container(Container::VecU128(Rc::new(
+            RefCell::new(it.into_iter().collect()),
+        ))))
+    }
+
+    pub fn vector_u256(it: impl IntoIterator<Item = (u128, u128)>) -> Self {
+        Self(ValueImpl::Container(Container::VecU256(Rc::new(
             RefCell::new(it.into_iter().collect()),
         ))))
     }
@@ -1060,6 +1097,7 @@ macro_rules! impl_vm_value_cast {
 impl_vm_value_cast!(u8, U8);
 impl_vm_value_cast!(u64, U64);
 impl_vm_value_cast!(u128, U128);
+impl_vm_value_cast!((u128,u128), U256);
 impl_vm_value_cast!(bool, Bool);
 impl_vm_value_cast!(AccountAddress, Address);
 impl_vm_value_cast!(ContainerRef, ContainerRef);
@@ -1071,6 +1109,7 @@ impl VMValueCast<IntegerValue> for Value {
             ValueImpl::U8(x) => Ok(IntegerValue::U8(x)),
             ValueImpl::U64(x) => Ok(IntegerValue::U64(x)),
             ValueImpl::U128(x) => Ok(IntegerValue::U128(x)),
+            ValueImpl::U256(l,r) => Ok(IntegerValue::U256(l,r)),
             v => Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
                 .with_message(format!("cannot cast {:?} to integer", v,))),
         }
@@ -1125,6 +1164,8 @@ impl VMValueCast<Vec<u8>> for Value {
         }
     }
 }
+
+// TODO from here
 
 impl VMValueCast<Vec<Value>> for Value {
     fn cast(self) -> PartialVMResult<Vec<Value>> {
