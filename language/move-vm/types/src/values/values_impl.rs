@@ -23,6 +23,7 @@ use std::{
     iter,
     rc::Rc,
 };
+use primitive_types::U256;
 
 /***************************************************************************************
  *
@@ -42,7 +43,7 @@ enum ValueImpl {
     U8(u8),
     U64(u64),
     U128(u128),
-    U256(u128, u128),
+    U256(U256),
     Bool(bool),
     Address(AccountAddress),
 
@@ -69,7 +70,7 @@ enum Container {
     VecU8(Rc<RefCell<Vec<u8>>>),
     VecU64(Rc<RefCell<Vec<u64>>>),
     VecU128(Rc<RefCell<Vec<u128>>>),
-    VecU256(Rc<RefCell<Vec<(u128, u128)>>>),
+    VecU256(Rc<RefCell<Vec<U256>>>),
     VecBool(Rc<RefCell<Vec<bool>>>),
     VecAddress(Rc<RefCell<Vec<AccountAddress>>>),
 }
@@ -136,7 +137,7 @@ pub enum IntegerValue {
     U8(u8),
     U64(u64),
     U128(u128),
-    U256(u128, u128),
+    U256(U256),
 }
 
 /// A Move struct.
@@ -301,7 +302,7 @@ macro_rules! impl_vm_value_ref {
 impl_vm_value_ref!(u8, U8);
 impl_vm_value_ref!(u64, U64);
 impl_vm_value_ref!(u128, U128);
-impl_vm_value_ref!((u128, u128), U256);
+impl_vm_value_ref!(U256, U256);
 impl_vm_value_ref!(bool, Bool);
 impl_vm_value_ref!(AccountAddress, Address);
 
@@ -567,10 +568,10 @@ impl IndexedRef {
             }
 
             (Locals(r1), VecU256(r2)) | (Struct(r1), VecU256(r2)) => {
-                *r1.borrow()[self.idx].as_value_ref::<(u128, u128)>()? == r2.borrow()[other.idx]
+                *r1.borrow()[self.idx].as_value_ref::<U256>()? == r2.borrow()[other.idx]
             }
             (VecU256(r1), Locals(r2)) | (VecU256(r1), Struct(r2)) => {
-                r1.borrow()[self.idx] == *r2.borrow()[other.idx].as_value_ref::<(u128, u128)>()?
+                r1.borrow()[self.idx] == *r2.borrow()[other.idx].as_value_ref::<U256>()?
             }
 
             (Locals(r1), VecBool(r2)) | (Struct(r1), VecBool(r2)) => {
@@ -988,8 +989,8 @@ impl Value {
         Self(ValueImpl::U128(x))
     }
 
-    pub fn u256(l: u128, r: u128) -> Self {
-        Self(ValueImpl::U256(l, r))
+    pub fn u256(x: U256) -> Self {
+        Self(ValueImpl::U256(x))
     }
 
     pub fn bool(x: bool) -> Self {
@@ -1037,7 +1038,7 @@ impl Value {
         ))))
     }
 
-    pub fn vector_u256(it: impl IntoIterator<Item = (u128, u128)>) -> Self {
+    pub fn vector_u256(it: impl IntoIterator<Item = U256>) -> Self {
         Self(ValueImpl::Container(Container::VecU256(Rc::new(
             RefCell::new(it.into_iter().collect()),
         ))))
@@ -1097,7 +1098,7 @@ macro_rules! impl_vm_value_cast {
 impl_vm_value_cast!(u8, U8);
 impl_vm_value_cast!(u64, U64);
 impl_vm_value_cast!(u128, U128);
-impl_vm_value_cast!((u128,u128), U256);
+impl_vm_value_cast!(U256, U256);
 impl_vm_value_cast!(bool, Bool);
 impl_vm_value_cast!(AccountAddress, Address);
 impl_vm_value_cast!(ContainerRef, ContainerRef);
@@ -1109,7 +1110,7 @@ impl VMValueCast<IntegerValue> for Value {
             ValueImpl::U8(x) => Ok(IntegerValue::U8(x)),
             ValueImpl::U64(x) => Ok(IntegerValue::U64(x)),
             ValueImpl::U128(x) => Ok(IntegerValue::U128(x)),
-            ValueImpl::U256(l,r) => Ok(IntegerValue::U256(l,r)),
+            ValueImpl::U256(x) => Ok(IntegerValue::U256(x)),
             v => Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
                 .with_message(format!("cannot cast {:?} to integer", v,))),
         }
@@ -1165,8 +1166,6 @@ impl VMValueCast<Vec<u8>> for Value {
     }
 }
 
-// TODO from here
-
 impl VMValueCast<Vec<Value>> for Value {
     fn cast(self) -> PartialVMResult<Vec<Value>> {
         match self.0 {
@@ -1177,7 +1176,9 @@ impl VMValueCast<Vec<Value>> for Value {
             | ValueImpl::Bool(_)
             | ValueImpl::U8(_)
             | ValueImpl::U64(_)
-            | ValueImpl::U128(_) => Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
+            | ValueImpl::U128(_)
+            | ValueImpl::U256(_)
+            => Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
                 .with_message(
                     "cannot cast a specialized vector into a non-specialized one".to_string(),
                 )),
@@ -1260,6 +1261,16 @@ impl VMValueCast<u128> for IntegerValue {
     }
 }
 
+impl VMValueCast<U256> for IntegerValue {
+    fn cast(self) -> PartialVMResult<U256> {
+        match self {
+            Self::U256(x) => Ok(x),
+            v => Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR)
+                .with_message(format!("cannot cast {:?} to u256", v,))),
+        }
+    }
+}
+
 impl IntegerValue {
     pub fn value_as<T>(self) -> PartialVMResult<T>
     where
@@ -1283,6 +1294,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => u8::checked_add(l, r).map(IntegerValue::U8),
             (U64(l), U64(r)) => u64::checked_add(l, r).map(IntegerValue::U64),
             (U128(l), U128(r)) => u128::checked_add(l, r).map(IntegerValue::U128),
+            (U256(l), U256(r)) => primitive_types::U256::checked_add(l, r).map(IntegerValue::U256),
             (l, r) => {
                 let msg = format!("Cannot add {:?} and {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1297,6 +1309,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => u8::checked_sub(l, r).map(IntegerValue::U8),
             (U64(l), U64(r)) => u64::checked_sub(l, r).map(IntegerValue::U64),
             (U128(l), U128(r)) => u128::checked_sub(l, r).map(IntegerValue::U128),
+            (U256(l), U256(r)) => primitive_types::U256::checked_sub(l, r).map(IntegerValue::U256),
             (l, r) => {
                 let msg = format!("Cannot sub {:?} from {:?}", r, l);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1311,6 +1324,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => u8::checked_mul(l, r).map(IntegerValue::U8),
             (U64(l), U64(r)) => u64::checked_mul(l, r).map(IntegerValue::U64),
             (U128(l), U128(r)) => u128::checked_mul(l, r).map(IntegerValue::U128),
+            (U256(l), U256(r)) => primitive_types::U256::checked_mul(l, r).map(IntegerValue::U256),
             (l, r) => {
                 let msg = format!("Cannot mul {:?} and {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1325,6 +1339,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => u8::checked_div(l, r).map(IntegerValue::U8),
             (U64(l), U64(r)) => u64::checked_div(l, r).map(IntegerValue::U64),
             (U128(l), U128(r)) => u128::checked_div(l, r).map(IntegerValue::U128),
+            (U256(l), U256(r)) => primitive_types::U256::checked_div(l, r).map(IntegerValue::U256),
             (l, r) => {
                 let msg = format!("Cannot div {:?} by {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1339,6 +1354,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => u8::checked_rem(l, r).map(IntegerValue::U8),
             (U64(l), U64(r)) => u64::checked_rem(l, r).map(IntegerValue::U64),
             (U128(l), U128(r)) => u128::checked_rem(l, r).map(IntegerValue::U128),
+            (U256(l), U256(r)) => primitive_types::U256::checked_rem(l, r).map(IntegerValue::U256),
             (l, r) => {
                 let msg = format!("Cannot rem {:?} by {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1353,6 +1369,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => IntegerValue::U8(l | r),
             (U64(l), U64(r)) => IntegerValue::U64(l | r),
             (U128(l), U128(r)) => IntegerValue::U128(l | r),
+            (U256(l), U256(r)) => IntegerValue::U256(l | r),
             (l, r) => {
                 let msg = format!("Cannot bit_or {:?} and {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1366,6 +1383,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => IntegerValue::U8(l & r),
             (U64(l), U64(r)) => IntegerValue::U64(l & r),
             (U128(l), U128(r)) => IntegerValue::U128(l & r),
+            (U256(l), U256(r)) => IntegerValue::U256(l & r),
             (l, r) => {
                 let msg = format!("Cannot bit_and {:?} and {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1379,6 +1397,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => IntegerValue::U8(l ^ r),
             (U64(l), U64(r)) => IntegerValue::U64(l ^ r),
             (U128(l), U128(r)) => IntegerValue::U128(l ^ r),
+            (U256(l), U256(r)) => IntegerValue::U256(l ^ r),
             (l, r) => {
                 let msg = format!("Cannot bit_xor {:?} and {:?}", l, r);
                 return Err(PartialVMError::new(StatusCode::INTERNAL_TYPE_ERROR).with_message(msg));
@@ -1408,6 +1427,12 @@ impl IntegerValue {
                 }
                 IntegerValue::U128(x << n_bits)
             }
+            U256(x) => {
+                if n_bits >= 256 {
+                    return Err(PartialVMError::new(StatusCode::ARITHMETIC_ERROR));
+                }
+                IntegerValue::U256(x << n_bits)
+            }
         })
     }
 
@@ -1433,6 +1458,12 @@ impl IntegerValue {
                 }
                 IntegerValue::U128(x >> n_bits)
             }
+            U256(x) => {
+                if n_bits >= 256 {
+                    return Err(PartialVMError::new(StatusCode::ARITHMETIC_ERROR));
+                }
+                IntegerValue::U256(x << n_bits)
+            }
         })
     }
 
@@ -1443,6 +1474,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => l < r,
             (U64(l), U64(r)) => l < r,
             (U128(l), U128(r)) => l < r,
+            (U256(l), U256(r)) => l < r,
             (l, r) => {
                 let msg = format!(
                     "Cannot compare {:?} and {:?}: incompatible integer types",
@@ -1460,6 +1492,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => l <= r,
             (U64(l), U64(r)) => l <= r,
             (U128(l), U128(r)) => l <= r,
+            (U256(l), U256(r)) => l <= r,
             (l, r) => {
                 let msg = format!(
                     "Cannot compare {:?} and {:?}: incompatible integer types",
@@ -1477,6 +1510,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => l > r,
             (U64(l), U64(r)) => l > r,
             (U128(l), U128(r)) => l > r,
+            (U256(l), U256(r)) => l > r,
             (l, r) => {
                 let msg = format!(
                     "Cannot compare {:?} and {:?}: incompatible integer types",
@@ -1494,6 +1528,7 @@ impl IntegerValue {
             (U8(l), U8(r)) => l >= r,
             (U64(l), U64(r)) => l >= r,
             (U128(l), U128(r)) => l >= r,
+            (U256(l), U256(r)) => l >= r,
             (l, r) => {
                 let msg = format!(
                     "Cannot compare {:?} and {:?}: incompatible integer types",
@@ -1511,6 +1546,7 @@ impl IntegerValue {
             U8(x) => Value::u8(x),
             U64(x) => Value::u64(x),
             U128(x) => Value::u128(x),
+            U256(x) => Value::u256(x),
         }
     }
 }
@@ -1537,6 +1573,14 @@ impl IntegerValue {
                     Ok(x as u8)
                 }
             }
+            U256(x) => {
+                if x > primitive_types::U256::from(std::u8::MAX) {
+                    Err(PartialVMError::new(StatusCode::ARITHMETIC_ERROR)
+                        .with_message(format!("Cannot cast u266({}) to u8", x)))
+                } else {
+                    Ok(x.0[0] as u8) // x.0[0] is LSB of [u64;4]
+                }
+            }
         }
     }
 
@@ -1554,17 +1598,44 @@ impl IntegerValue {
                     Ok(x as u64)
                 }
             }
+            U256(x) => {
+                if x > primitive_types::U256::from(std::u64::MAX) {
+                    Err(PartialVMError::new(StatusCode::ARITHMETIC_ERROR)
+                        .with_message(format!("Cannot cast u256({}) to u64", x)))
+                } else {
+                    Ok(x.0[0]) // x.0[0] is LSB of [u64;4]
+                }
+            }
         }
     }
 
     pub fn cast_u128(self) -> PartialVMResult<u128> {
         use IntegerValue::*;
 
-        Ok(match self {
-            U8(x) => x as u128,
-            U64(x) => x as u128,
-            U128(x) => x,
-        })
+        match self {
+            U8(x) => Ok(x as u128),
+            U64(x) => Ok(x as u128),
+            U128(x) => Ok(x),
+            U256(x) => {
+                if x > primitive_types::U256::from(std::u128::MAX) {
+                    Err(PartialVMError::new(StatusCode::ARITHMETIC_ERROR)
+                        .with_message(format!("Cannot cast u256({}) to u128", x)))
+                } else {
+                    Ok(x.as_u128())
+                }
+            }
+        }
+    }
+
+    pub fn cast_u256(self) -> PartialVMResult<U256> {
+        use IntegerValue::*;
+
+        match self {
+            U8(x) => Ok(primitive_types::U256::from(x)),
+            U64(x) => Ok(primitive_types::U256::from(x)),
+            U128(x) => Ok(primitive_types::U256::from(x)),
+            U256(x) => Ok(x)
+        }
     }
 }
 
@@ -1575,6 +1646,8 @@ impl IntegerValue {
 *   Implemented as a built-in data type.
 *
 **************************************************************************************/
+
+// TODO: from here
 
 pub const INDEX_OUT_OF_BOUNDS: u64 = NFE_VECTOR_ERROR_BASE + 1;
 pub const POP_EMPTY_VEC: u64 = NFE_VECTOR_ERROR_BASE + 2;

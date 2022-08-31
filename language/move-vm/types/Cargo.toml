@@ -19,6 +19,8 @@ bcs = "0.1.2"
 move-core-types = { path = "../../move-core/types" }
 move-binary-format = { path = "../../move-binary-format" }
 
+primitive-types = "0.11.1"
+
 [dev-dependencies]
 proptest = "1.0.0"
 
